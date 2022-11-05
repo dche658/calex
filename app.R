@@ -239,7 +239,7 @@ ui <- dashboardPage(
                                          p("The adjusted calcium equation is given 
                                            by:"),
                                          p("Adjusted Calcium = Measured Calcium + (Slope x (SetPoint - Measured Albumin))"),
-                                         p("where SetPoint is the lbumin set point entered above, and slope is given by the
+                                         p("where SetPoint is the albumin set point entered above, and slope is given by the
                                            value below."),
                                          numericInput("slope", label = "Slope",
                                                                value = 0.020,
