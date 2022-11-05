@@ -122,9 +122,15 @@ ui <- dashboardPage(
                   p("Use the column selection page to indicate
                     which columns should be used for each of the variable"),
                   h4("Analysis"),
-                  p("Once selected the regression of calcium on albumin will be 
-                    calculated automatically. The filters can be used to select
-                    different subset of data for analysis"),
+                  p("There are two parts to this section. The first uses the supplied
+                  data to calculate the regression of calcium on albumin. This can
+                  be used to derive the optimal slope for the available data. The
+                  filters can be used to select different subsets of data for 
+                    analysis. The second part allows the parameters for the albumin
+                    adjusted calcium equation to be set to look at the proportion
+                    of values below, within, or above the reference interval using
+                    the supplied data; as well as assessing the concordance with 
+                    ionised calcium if it is available."),
                   style="margin: 4px;"
                 )
                 
