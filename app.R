@@ -208,20 +208,48 @@ ui <- dashboardPage(
                             calcium equation."))
               ),
               fluidRow(
-                column(12, h4("Regression statistics"),
-                       tableOutput("table3"),
-                       textOutput("rse"),
-                       textOutput("mrs"),
-                       plotOutput("scatterplot"),
-                       h4("Albumin adjusted calcium"),
-                       textOutput("equation"),
-                       plotOutput("adjCaHistogram"),
-                       tableOutput("adjCaCatTbl"),
-                       h4("Adjusted calcium and ionised calcium concordance"),
-                       tableOutput("concordance"),
-                       plotOutput("scatterplot2")
-                ) # column
-              ))
+                tabBox(id = "tabset1", width = 12,
+                       tabPanel("Regression",
+                                fluidRow(
+                                  column(12, h4("Regression statistics"),
+                                         tableOutput("table3"),
+                                         textOutput("rse"),
+                                         textOutput("mrs"),
+                                         plotOutput("scatterplot"),
+                                         h4("Albumin adjusted calcium"),
+                                         textOutput("equation"),
+                                         plotOutput("adjCaHistogram"),
+                                         tableOutput("adjCaCatTbl"),
+                                         h4("Adjusted calcium and ionised calcium concordance"),
+                                         tableOutput("concordance"),
+                                         plotOutput("scatterplot2")
+                                )
+                                
+                                )
+                       ),
+                       tabPanel("Verification",
+                                fluidRow(
+                                  column(12, h4("Adjusted Calcium Verification"),
+                                         p("The adjusted calcium equation is given 
+                                           by:"),
+                                         p("Adjusted Calcium = Measured Calcium + (Slope x (SetPoint - Measured Albumin))"),
+                                         p("where SetPoint is the lbumin set point entered above, and slope is given by the
+                                           value below."),
+                                         numericInput("slope", label = "Slope",
+                                                               value = 0.020,
+                                                               step = 0.001),
+                                         h4("Albumin adjusted calcium"),
+                                         plotOutput("adjCaHist2"),
+                                         tableOutput("adjCaCatTbl2"),
+                                         h4("Adjusted calcium and ionised calcium concordance"),
+                                         tableOutput("concordance2"),
+                                         plotOutput("concordancePlot2")
+                                         )
+                                )
+                                )
+                       )
+              )
+      )# tabItem
     ) # tabItems
   ) # dashboardBody
 ) # dashboardPage
@@ -317,6 +345,7 @@ server <- function(input, output) {
   #  - Chart distributions against the reference intervals and calculate fraction
   #    outside the iCa reference interval
   
+  # Calculate adjusted calcium based on the regression coefficient
   adjustedCalcium <- reactive({
     adjca <- NULL
     if (!is.null(filteredData()) & !is.null(regression())) {
@@ -326,12 +355,34 @@ server <- function(input, output) {
     adjca
   })
   
+  # Calculate adjusted calcium based on the provided parameters
+  adjCa2 <- reactive({
+    adjca <- NULL
+    if (!is.null(filteredData())) {
+      adjca <- filteredData()$calcium + (input$slope*(input$midAlb - filteredData()$albumin))
+    }
+    # message("Calculated adjusted calcium 2")
+    adjca
+  })
+  
   adjCalCategory <- reactive({
     adjcacat <- NULL
     if (!is.null(adjustedCalcium())) {
       adjcacat <- ifelse(adjustedCalcium() < input$lrlCal,
                          "below",
                          ifelse(adjustedCalcium() > input$urlCal,
+                                "above","within"))
+      adjcacat <- factor(adjcacat, levels = c("below", "within", "above"))
+    }
+    adjcacat
+  })
+  
+  adjCalCat2 <- reactive({
+    adjcacat <- NULL
+    if (!is.null(adjCa2())) {
+      adjcacat <- ifelse(adjCa2() < input$lrlCal,
+                         "below",
+                         ifelse(adjCa2() > input$urlCal,
                                 "above","within"))
       adjcacat <- factor(adjcacat, levels = c("below", "within", "above"))
     }
@@ -425,11 +476,37 @@ server <- function(input, output) {
     plt
   })
   
+  output$adjCaHist2 <- renderPlot({
+    plt <- NULL
+    if(!is.null(filteredData())) {
+      if (!is.null(adjCa2())) {
+        df <- data.frame(adjca = adjCa2())
+        plt <- ggplot(df)+
+          geom_histogram(aes(x=adjca), binwidth = 0.02)+
+          geom_vline(xintercept = input$lrlCal, color="red")+
+          geom_vline(xintercept = input$urlCal, color="red")+
+          xlab("Adjusted calcium")  
+      }
+    }
+    plt
+  })
   output$adjCaCatTbl <- renderTable({
     data <- NULL
     if(!is.null(filteredData())) {
       if (!is.null(adjCalCategory())) {
         data <- as.data.frame(table(adjCalCategory()))
+        data$Percent=round(100*data$Freq/sum(data$Freq),digits = 1)
+        colnames(data) <- c("Category","Freq","Percent")
+      }
+    }
+    data
+  }, rownames = TRUE)
+  
+  output$adjCaCatTbl2 <- renderTable({
+    data <- NULL
+    if(!is.null(filteredData())) {
+      if (!is.null(adjCalCat2())) {
+        data <- as.data.frame(table(adjCalCat2()))
         data$Percent=round(100*data$Freq/sum(data$Freq),digits = 1)
         colnames(data) <- c("Category","Freq","Percent")
       }
@@ -459,10 +536,51 @@ server <- function(input, output) {
     df
   }, rownames = TRUE)
   
+  output$concordance2 <- renderTable({
+    df <- NULL
+    if(!is.null(filteredData())) {
+      adjca <- adjCa2()
+      if (!is.null(adjCalCat2()) & "ica" %in% colnames(filteredData())) {
+        adjiccat <- ifelse(filteredData()$ica < input$lrlIca,
+                           "below",
+                           ifelse(filteredData()$ica > input$urlIca,
+                                  "above","within"))
+        adjiccat <- factor(adjiccat, levels = c("below", "within", "above"))
+        k <- kappa2(data.frame(adjCalCat2(),adjiccat))
+        df <- data.frame(Results=c(as.character(k$subjects),
+                                   as.character(k$raters),
+                                   as.character(round(k$value,digits = 3)),
+                                   as.character(round(k$statistic, digits = 1)),
+                                   as.character(k$p.value)))
+        rownames(df) <- c("Subject","Raters","Kappa","z","p-value") 
+      }
+    }
+    df
+  }, rownames = TRUE)
+  
   output$scatterplot2 <- renderPlot({
     plt <- NULL
     if(!is.null(filteredData())) {
       adjca <- adjustedCalcium()
+      if (!is.null(adjca) & "ica" %in% colnames(filteredData())) {
+        df <- data.frame(filteredData(),adjca)
+        plt <- ggplot(df)+
+          geom_point(aes(ica, adjca), color="blue", alpha=0.5)+
+          geom_hline(yintercept = input$lrlCal, color="red")+
+          geom_hline(yintercept = input$urlCal, color="red")+
+          geom_vline(xintercept = input$lrlIca, color="red")+
+          geom_vline(xintercept = input$urlIca, color="red")+
+          xlab("Ionised calcium")+
+          ylab("Adjusted calcium")
+      }
+    }
+    plt
+  })
+  
+  output$concordancePlot2 <- renderPlot({
+    plt <- NULL
+    if(!is.null(filteredData())) {
+      adjca <- adjCa2()
       if (!is.null(adjca) & "ica" %in% colnames(filteredData())) {
         df <- data.frame(filteredData(),adjca)
         plt <- ggplot(df)+
