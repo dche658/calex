@@ -12,6 +12,7 @@ library(shinydashboard)
 library(shinyjs)
 library(ggplot2)
 library(dplyr)
+library(tidyr)
 library(irr)
 
 
@@ -30,29 +31,6 @@ getmode <- function(v) {
 
 #formatGender(c("M","Male","m","Male","F","Female","female","I","UNK"))
 
-#' Add a column to the data frame and create data frame if it does not exist
-#'
-#' @param data Data frame to which column is to be added
-#' @param col Data vector to be added
-#' @param colname Name of the new column as text
-#' 
-addCol <- function(data, col, colname) {
-  if (is.null(data)) {
-    data <- data.frame(col=col)
-    
-  } else {
-    if (colname %in% colnames(data)) {
-      data[[colname]] <- col
-    } else {
-      data <- data.frame(data,col=col)  
-    }
-  }
-  # apply the specified column name to the last column
-  col_names <- colnames(data)
-  col_names[ncol(data)] <- colname
-  colnames(data) <- col_names
-  return(data)
-}
 
 #' CKD-EPI Estimated GFR
 #'
@@ -247,8 +225,20 @@ ui <- dashboardPage(
                                          h4("Albumin adjusted calcium"),
                                          plotOutput("adjCaHist2"),
                                          tableOutput("adjCaCatTbl2"),
-                                         h4("Adjusted calcium and ionised calcium concordance"),
-                                         tableOutput("concordance2"),
+                                         h4("Adjusted calcium versus ionised calcium"),
+                                         fluidRow(
+                                           column(6,textOutput("verify.R.sq"))
+                                         ),
+                                         fluidRow(
+                                           box(title="Kappa", width=4,
+                                               tableOutput("concordance2")),
+                                           box(title="Adjusted Calcium v Ionised Calcium", width=4,
+                                               column(12,tableOutput("contingency2"),
+                                                      textOutput("agreement2"))),
+                                           box(title="Total Calcium v Ionised Calcium", width=4,
+                                               column(12,tableOutput("contingency3"),
+                                                      textOutput("agreement3")))
+                                         ),
                                          plotOutput("concordancePlot2")
                                          )
                                 )
@@ -302,15 +292,56 @@ server <- function(input, output) {
     df
   })
   
+  selectedData <- reactive({
+    # selected columns
+    sh <- c()
+    # column names
+    ch <- c()
+    df <- NULL
+    if(input$col_ca != "Select") {
+      sh <- c(sh,input$col_ca)
+      ch <- c(ch,"calcium")
+    }
+    if(input$col_alb != "Select") {
+      sh <- c(sh,input$col_alb)
+      ch <- c(ch,"albumin")
+    }
+    if(input$col_ica != "Skip") {
+      sh <- c(sh,input$col_ica)
+      ch <- c(ch,"ica")
+    }
+    if(input$col_age != "Skip") {
+      sh <- c(sh,input$col_age)
+      ch <- c(ch,"age")
+    }
+    if(input$col_sex != "Skip") {
+      sh <- c(sh,input$col_sex)
+      ch <- c(ch,"sex")
+    }
+    if(input$col_crea != "Skip") {
+      sh <- c(sh,input$col_crea)
+      ch <- c(ch,"crea")
+    }
+    if (length(sh)>1) {
+      df <- fileData()[,sh]
+      colnames(df) <- ch
+      if(input$col_sex != "Skip") {
+        df$sex <- formatGender(df$sex)
+      }
+      if (input$col_age != "Skip" & input$col_sex != "Skip" & input$col_crea != "Skip") {
+        df$egfr <- egfr(df$crea, df$age, df$sex)
+      }
+    }
+    df
+  })
   
   # Apply filters to the data in dat
   filteredData <- reactive({
-    df <- NULL
-    if (!is.null(global$dat) & 
-        "calcium" %in% colnames(global$dat) &
-        "albumin" %in% colnames(global$dat)) {
-      c <- colnames(global$dat)
-      df <- global$dat
+    df <- selectedData()
+    if (!is.null(df) & 
+        "calcium" %in% colnames(df) &
+        "albumin" %in% colnames(df)) {
+      c <- colnames(df)
       # apply filters
       df <- df[df$albumin > input$filterAlb[1] & df$albumin < input$filterAlb[2],]
       if ("age" %in% c) {
@@ -371,6 +402,18 @@ server <- function(input, output) {
     adjca
   })
   
+  adjIcaCat <- reactive({
+    adjiccat <- NULL
+    if(!is.null(filteredData()) & "ica" %in% colnames(filteredData())) {
+      adjiccat <- ifelse(filteredData()$ica < input$lrlIca,
+                         "below",
+                         ifelse(filteredData()$ica > input$urlIca,
+                                "above","within"))
+      adjiccat <- factor(adjiccat, levels = c("below", "within", "above"))  
+    }
+    adjiccat
+  })
+  
   adjCalCategory <- reactive({
     adjcacat <- NULL
     if (!is.null(adjustedCalcium())) {
@@ -395,14 +438,47 @@ server <- function(input, output) {
     adjcacat
   })
   
+  calciumCategory <- reactive({
+    cacat <- NULL
+    if (!is.null(filteredData())) {
+      cacat <- ifelse(filteredData()$calcium < input$lrlCal,
+                         "below",
+                         ifelse(filteredData()$calcium > input$urlCal,
+                                "above","within"))
+      cacat <- factor(cacat, levels = c("below", "within", "above"))
+    }
+    cacat
+  })
+  
+  # Calculate the contingency table for adj calcium and ionised calcium
+  # using the user provided adjusted calcium parameters
+  ctgcyTbl2 <- reactive({
+    df <- NULL
+    if(!is.null(adjCalCat2()) & !is.null(adjIcaCat())) {
+      df <- table(adjCalCat2(),adjIcaCat())
+    }
+    df
+  })
+  
+  # Calculate the contingency table for total calcium and ionised calcium
+  ctgcyTbl3 <- reactive({
+    df <- NULL
+    if(!is.null(calciumCategory()) & !is.null(adjIcaCat())) {
+      df <- table(calciumCategory(),adjIcaCat())
+    }
+    df
+  })
+  
+  
   output$table1 <- renderTable({
     global$df <- fileData()
     head(fileData())
   }, bordered = TRUE, width = "400px" )
   
   output$table2 <- renderTable({
-    if(!is.null(global$dat)) {
-      return(head(global$dat))
+    df <- selectedData()
+    if(!is.null(df)) {
+      return(head(df))
     }
   })
   
@@ -525,11 +601,7 @@ server <- function(input, output) {
     if(!is.null(filteredData())) {
       adjca <- adjustedCalcium()
       if (!is.null(adjCalCategory()) & "ica" %in% colnames(filteredData())) {
-        adjiccat <- ifelse(filteredData()$ica < input$lrlIca,
-                           "below",
-                           ifelse(filteredData()$ica > input$urlIca,
-                                  "above","within"))
-        adjiccat <- factor(adjiccat, levels = c("below", "within", "above"))
+        adjiccat <- adjIcaCat()
         k <- kappa2(data.frame(adjCalCategory(),adjiccat))
         df <- data.frame(Results=c(as.character(k$subjects),
                                    as.character(k$raters),
@@ -542,16 +614,28 @@ server <- function(input, output) {
     df
   }, rownames = TRUE)
   
+  
+  # Compared adjusted calcium calculated by provided parameters to ionised calcium
+  
+  # Continuous comparison
+  output$verify.R.sq <- renderText({
+    txt <- ""
+    if(!is.null(adjCa2()) & !is.null(filteredData()) & "ica" %in% colnames(filteredData())) {
+      txt <- paste("R-squared:",round(cor(adjCa2(),
+                                          filteredData()$ica, 
+                                          method = "pearson")**2,
+                                      digits = 3))
+    }
+    txt
+  })
+  
+  # Categorical comparison
   output$concordance2 <- renderTable({
     df <- NULL
     if(!is.null(filteredData())) {
       adjca <- adjCa2()
       if (!is.null(adjCalCat2()) & "ica" %in% colnames(filteredData())) {
-        adjiccat <- ifelse(filteredData()$ica < input$lrlIca,
-                           "below",
-                           ifelse(filteredData()$ica > input$urlIca,
-                                  "above","within"))
-        adjiccat <- factor(adjiccat, levels = c("below", "within", "above"))
+        adjiccat <- adjIcaCat()
         k <- kappa2(data.frame(adjCalCat2(),adjiccat))
         df <- data.frame(Results=c(as.character(k$subjects),
                                    as.character(k$raters),
@@ -564,20 +648,73 @@ server <- function(input, output) {
     df
   }, rownames = TRUE)
   
+  # Contingency table and percent agreement Adjusted Ca versus Ionised Ca
+  output$contingency2 <- renderTable({
+    df <- ctgcyTbl2()
+    if (!is.null(df)) {
+      as.data.frame.matrix(ctgcyTbl2())
+    }
+  }, rownames = TRUE)
+  
+  output$agreement2 <- renderText({
+    df <- ctgcyTbl2()
+    txt <- ""
+    if (!is.null(df)) {
+      agree <- 0
+      for(i in 1:nrow(df)) {
+        agree <- agree + df[i,i]
+      }
+      percentAgree <- 100* agree / nrow(filteredData())
+      txt <- paste("Percent agreement:",round(percentAgree,digits = 1),"%")
+    }
+    txt
+  })
+  
+  # Contingency table and percent agreement Total Ca versus Ionised Ca
+  output$contingency3 <- renderTable({
+    df <- ctgcyTbl3()
+    if (!is.null(df)) {
+      as.data.frame.matrix(ctgcyTbl3())  
+    }
+  }, rownames = TRUE)
+  
+  output$agreement3 <- renderText({
+    df <- ctgcyTbl3()
+    txt <- ""
+    if (!is.null(df)) {
+      agree <- 0
+      for(i in 1:nrow(df)) {
+        agree <- agree + df[i,i]
+      }
+      percentAgree <- 100* agree / nrow(filteredData())
+      txt <- paste("Percent agreement:",round(percentAgree,digits = 1),"%")
+    }
+    txt
+  })
+  
   output$scatterplot2 <- renderPlot({
     plt <- NULL
     if(!is.null(filteredData())) {
       adjca <- adjustedCalcium()
       if (!is.null(adjca) & "ica" %in% colnames(filteredData())) {
-        df <- data.frame(filteredData(),adjca)
+        df <- filteredData() %>%
+          select(calcium,ica,albumin)
+        df <- data.frame(df,adjca) %>% 
+          pivot_longer(cols = c(calcium, adjca),
+                       names_to = "Analyte",
+                       values_to = "calcium")
+        df$Analyte <- ifelse(df$Analyte=="calcium",
+                             "Total calcium",
+                             "Adjusted calcium")
         plt <- ggplot(df)+
-          geom_point(aes(ica, adjca), color="blue", alpha=0.5)+
+          geom_point(aes(ica, calcium, color=albumin))+
           geom_hline(yintercept = input$lrlCal, color="red")+
           geom_hline(yintercept = input$urlCal, color="red")+
           geom_vline(xintercept = input$lrlIca, color="red")+
           geom_vline(xintercept = input$urlIca, color="red")+
-          xlab("Ionised calcium")+
-          ylab("Adjusted calcium")
+          facet_wrap(facets = vars(Analyte))+
+          xlab("Ionised calcium (mmol/L)")+
+          ylab("Calcium (mmol/L)")
       }
     }
     plt
@@ -588,15 +725,24 @@ server <- function(input, output) {
     if(!is.null(filteredData())) {
       adjca <- adjCa2()
       if (!is.null(adjca) & "ica" %in% colnames(filteredData())) {
-        df <- data.frame(filteredData(),adjca)
+        df <- filteredData() %>%
+          select(calcium,ica,albumin)
+        df <- data.frame(df,adjca) %>% 
+          pivot_longer(cols = c(calcium, adjca),
+                       names_to = "Analyte",
+                       values_to = "calcium")
+        df$Analyte <- ifelse(df$Analyte=="calcium",
+                             "Total calcium",
+                             "Adjusted calcium")
         plt <- ggplot(df)+
-          geom_point(aes(ica, adjca), color="blue", alpha=0.5)+
+          geom_point(aes(ica, calcium, color=albumin))+
           geom_hline(yintercept = input$lrlCal, color="red")+
           geom_hline(yintercept = input$urlCal, color="red")+
           geom_vline(xintercept = input$lrlIca, color="red")+
           geom_vline(xintercept = input$urlIca, color="red")+
-          xlab("Ionised calcium")+
-          ylab("Adjusted calcium")
+          facet_wrap(facets = vars(Analyte))+
+          xlab("Ionised calcium (mmol/L)")+
+          ylab("Calcium (mmol/L)")
       }
     }
     plt
@@ -610,39 +756,7 @@ server <- function(input, output) {
                            input$col_age != "Skip" &
                            input$col_sex != "Skip")
   })
-  observeEvent(input$col_ca,{
-    if(input$col_ca != "Select")
-      global$dat <- data.frame(calcium=as.double(fileData()[[input$col_ca]]))
-  })
-  observeEvent(input$col_alb,{
-    if(input$col_alb != "Select")
-      global$dat <- addCol(global$dat,as.integer(fileData()[[input$col_alb]]),"albumin")
-  })
-  observeEvent(input$col_ica,{
-    if (input$col_ica != "Skip") 
-      global$dat <- addCol(global$dat,as.double(fileData()[[input$col_ica]]),"ica")
-  })
-  observeEvent(input$col_age,{
-    if (input$col_age != "Skip")
-      global$dat <- addCol(global$dat,as.double(fileData()[[input$col_age]]),"age")
-    if (input$col_age != "Skip" & input$col_sex != "Skip" & input$col_crea != "Skip") {
-      global$dat$egfr <- egfr(global$dat$crea, global$dat$age, global$dat$sex)
-    }
-  })
-  observeEvent(input$col_sex,{
-    if (input$col_sex != "Skip") 
-      global$dat <- addCol(global$dat,formatGender(fileData()[[input$col_sex]]),"sex")
-    if (input$col_age != "Skip" & input$col_sex != "Skip" & input$col_crea != "Skip") {
-      global$dat$egfr <- egfr(global$dat$crea, global$dat$age, global$dat$sex)
-    }
-  })
-  observeEvent(input$col_crea,{
-    if (input$col_crea != "Skip")
-      global$dat <- addCol(global$dat,as.integer(fileData()[[input$col_crea]]),"crea")
-    if (input$col_age != "Skip" & input$col_sex != "Skip" & input$col_crea != "Skip") {
-      global$dat$egfr <- egfr(global$dat$crea, global$dat$age, global$dat$sex)
-    }
-  })
+
   observeEvent(input$midAlb, {
     adjustedCalcium()
   })
