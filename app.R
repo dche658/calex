@@ -66,7 +66,6 @@ egfr <- function(creatinine, age, gender, black=FALSE, ckdepi.formula="2009") {
   return(gfr)
 }
 
-
 # Define UI for application
 ui <- dashboardPage(
   dashboardHeader(title = "Calcium explorer"),
@@ -109,6 +108,7 @@ ui <- dashboardPage(
                     of values below, within, or above the reference interval using
                     the supplied data; as well as assessing the concordance with 
                     ionised calcium if it is available."),
+                  tags$footer(includeHTML("footer.html")),
                   style="margin: 4px;"
                 )
                 
@@ -248,6 +248,7 @@ ui <- dashboardPage(
       )# tabItem
     ) # tabItems
   ) # dashboardBody
+  
 ) # dashboardPage
 
 # Define server logic 
